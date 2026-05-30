@@ -1,0 +1,188 @@
+/* =====================
+   CASH TRACK SAAS UI
+   ===================== */
+
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    background: #f4f6f9;
+    color: #111827;
+}
+
+
+
+/* CARDS (DASHBOARD) */
+.card {
+    background: white;
+    padding: 15px;
+    border-radius: 10px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+    flex: 1;
+    min-width: 200px;
+}
+
+/* FLEX GRID */
+.flex {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+/* BUTTONS */
+button {
+    background: #3b82f6;
+    color: white;
+    border: none;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+button:hover {
+    background: #2563eb;
+}
+
+/* DELETE BUTTON */
+.btn-danger {
+    background: red;
+}
+
+.btn-danger:hover {
+    background: darkred;
+}
+
+/* TABLES */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    background: white;
+}
+
+table th {
+    background: #f1f5f9;
+    text-align: left;
+    padding: 10px;
+}
+
+table td {
+    padding: 10px;
+    border-top: 1px solid #e5e7eb;
+}
+
+/* INPUTS */
+input, select, textarea {
+    width: 100%;
+    padding: 8px;
+    margin-top: 5px;
+    margin-bottom: 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+}
+
+.navbar {
+    background: #0f172a;
+    padding: 15px 20px;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    z-index: 1000;
+}
+
+/* 🔥 FORCE LOGO VISIBILITY */
+.logo-link {
+    color: white !important;
+    text-decoration: none;
+    font-weight: bold;
+    font-size: 18px;
+    display: inline-block;
+}
+
+/* remove default link styling globally inside navbar */
+.navbar a {
+    color: white;
+}
+
+.sidebar {
+    width: 220px;
+    position: fixed;
+    top: 50px;
+    left: 0;
+    height: 100vh;
+    background: #111827;
+    padding-top: 20px;
+}
+
+.sidebar a {
+    display: block;
+    color: #e5e7eb;
+    padding: 12px 20px;
+    text-decoration: none;
+    font-size: 14px;
+    transition: 0.2s;
+}
+
+.sidebar a:hover {
+    background: #1f2937;
+    padding-left: 25px;
+}
+
+.sidebar hr {
+    border: 0;
+    border-top: 1px solid #374151;
+    margin: 10px 0;
+}
+
+.danger-link {
+    color: #f87171 !important;
+}
+
+.content {
+    margin-left: 240px;
+    padding: 80px 20px 20px 20px;
+}
+
+.sidebar a.active {
+    background: #1f2937;
+    border-left: 4px solid #3b82f6;
+    padding-left: 16px;
+}
+
+/* Checkbox container */
+.checkbox {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    font-size: 14px;
+    user-select: none;
+}
+
+/* Hide default checkbox */
+.checkbox input {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 18px;
+    height: 18px;
+    border: 2px solid #cbd5e1;
+    border-radius: 5px;
+    display: grid;
+    place-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background: white;
+}
+
+/* Checked state */
+.checkbox input:checked {
+    background-color: #3b82f6;
+    border-color: #3b82f6;
+}
+
+/* Checkmark */
+.checkbox input:checked::before {
+    content: "✓";
+    color: white;
+    font-size: 12px;
+    font-weight: bold;
+}
