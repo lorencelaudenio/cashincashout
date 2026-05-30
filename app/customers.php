@@ -121,25 +121,28 @@ if (isset($_GET['edit'])) {
 <div class="card">
 
     <!-- ➕ ADD / ✏️ EDIT FORM -->
-    <form method="POST">
+    <form method="POST" style="margin-bottom:15px; display:flex; gap:10px; flex-wrap:wrap; align-items:end;">
 
         <input type="hidden" name="id" value="<?= $edit['id'] ?? '' ?>">
 
-        <label>Name</label>
-        <input type="text" name="name"
-               value="<?= $edit['name'] ?? '' ?>"
-               required>
+        <input type="text"
+            name="name"
+            placeholder="Name"
+            value="<?= $edit['name'] ?? '' ?>"
+            required>
 
-        <label>Phone</label>
-        <input type="text" name="phone"
-               value="<?= $edit['phone'] ?? '' ?>">
+        <input type="text"
+            name="phone"
+            placeholder="Phone"
+            value="<?= $edit['phone'] ?? '' ?>">
 
-        <label>Email</label>
-        <input type="email" name="email"
-               value="<?= $edit['email'] ?? '' ?>">
+        <input type="email"
+            name="email"
+            placeholder="Email"
+            value="<?= $edit['email'] ?? '' ?>">
 
-        <button type="submit" name="<?= $edit ? 'update' : 'add' ?>">
-            <?= $edit ? 'Update Customer' : 'Add Customer' ?>
+        <button type="submit" name="<?= !empty($edit) ? 'update' : 'add' ?>">
+            <?= !empty($edit) ? 'Update' : 'Add' ?>
         </button>
 
     </form>

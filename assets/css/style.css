@@ -186,3 +186,11 @@ input, select, textarea {
     font-size: 12px;
     font-weight: bold;
 }
+
+mark {
+    background: #fde68a;
+    color: #111827;
+    padding: 2px 4px;
+    border-radius: 4px;
+    font-weight: 500;
+}

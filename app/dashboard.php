@@ -6,276 +6,190 @@ if (!isset($_SESSION['user_id'])) {
     exit;
 }
 
-include "../includes/header.php";
+$tenant_id = $_SESSION['tenant_id'];
 
+/* =========================
+   FILTER
+========================= */
 $range = $_GET['range'] ?? 'all';
-
-$from = $_GET['from'] ?? null;
-$to = $_GET['to'] ?? null;
+$from = $_GET['from'] ?? '';
+$to = $_GET['to'] ?? '';
 
 $dateCondition = "";
+$dateParams = [];
 
+/* =========================
+   BUILD FILTER
+========================= */
 if ($range === 'today') {
 
-    $dateCondition = "AND DATE(created_at) = CURDATE()";
+    $dateCondition = "AND DATE(t.created_at) = CURDATE()";
 
 } elseif ($range === 'week') {
 
-    $dateCondition = "AND YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1)";
+    $dateCondition = "AND YEARWEEK(t.created_at, 1) = YEARWEEK(CURDATE(), 1)";
 
 } elseif ($range === 'month') {
 
-    $dateCondition = "AND MONTH(created_at) = MONTH(CURDATE()) 
-                      AND YEAR(created_at) = YEAR(CURDATE())";
+    $dateCondition = "AND MONTH(t.created_at) = MONTH(CURDATE())
+                      AND YEAR(t.created_at) = YEAR(CURDATE())";
 
 } elseif ($range === 'year') {
 
-    $dateCondition = "AND YEAR(created_at) = YEAR(CURDATE())";
+    $dateCondition = "AND YEAR(t.created_at) = YEAR(CURDATE())";
 
 } elseif ($range === 'custom' && !empty($from) && !empty($to)) {
 
     $from = date('Y-m-d', strtotime($from));
     $to = date('Y-m-d', strtotime($to));
 
-    $dateCondition = "AND DATE(created_at) BETWEEN '$from' AND '$to'";
-
-} else {
-
-    $dateCondition = "";
+    $dateCondition = "AND DATE(t.created_at) BETWEEN ? AND ?";
+    $dateParams = [$from, $to];
 }
 
-// Get tenant ID FIRST
-$tenant_id = $_SESSION['tenant_id'];
+/* =========================
+   PARAMS
+========================= */
+$params = [$tenant_id];
+if (!empty($dateParams)) {
+    $params = array_merge($params, $dateParams);
+}
 
+/* =========================
+   BUSINESS NAME
+========================= */
+$stmt = $conn->prepare("SELECT business_name FROM tenants WHERE id = ?");
+$stmt->execute([$tenant_id]);
+$business_name = $stmt->fetchColumn() ?: 'My Business';
+
+/* =========================
+   WALLET BALANCE
+========================= */
 $stmt = $conn->prepare("
-    SELECT 
-        SUM(
-            CASE 
-                WHEN type = 'cash_in' THEN amount
-                WHEN type = 'cash_out' THEN -amount
-            END
-        ) as running_balance
-    FROM transactions
-    WHERE tenant_id = ?
+SELECT COALESCE(SUM(
+    CASE 
+        WHEN type = 'cash_out' THEN amount   -- money coming in
+        WHEN type = 'replenish' THEN amount  -- capital injection
+        WHEN type = 'cash_in' THEN -amount   -- money going out
+        ELSE 0
+    END
+),0) as wallet_balance
+    FROM transactions t
+    WHERE t.tenant_id = ?
+    $dateCondition
 ");
 
-$stmt->execute([$tenant_id]);
-$running_balance = $stmt->fetch()['running_balance'] ?? 0;
+$stmt->execute($params);
+$running_balance = $stmt->fetchColumn();
 
-//
-// 🏢 BUSINESS NAME
-//
+/* =========================
+   CASH IN
+========================= */
 $stmt = $conn->prepare("
-    SELECT business_name 
-    FROM tenants 
-    WHERE id = ?
-    LIMIT 1
-");
-
-$stmt->execute([$tenant_id]);
-
-$tenant = $stmt->fetch(PDO::FETCH_ASSOC);
-
-$business_name = $tenant['business_name'] ?? 'My Business';
-
-//
-// 💰 TOTAL CASH IN
-//
-$stmt = $conn->prepare("
-    SELECT COALESCE(SUM(amount),0) as total_in 
-    FROM transactions 
-    WHERE tenant_id = ? 
+    SELECT COALESCE(SUM(amount),0)
+    FROM transactions t
+    WHERE t.tenant_id = ?
     AND type = 'cash_in'
     $dateCondition
 ");
+$stmt->execute($params);
+$total_in = $stmt->fetchColumn();
 
-$stmt->execute([$tenant_id]);
-$total_in = $stmt->fetch()['total_in'];
-
-//
-// 💸 TOTAL CASH OUT
-//
+/* =========================
+   REPLENISH
+========================= */
 $stmt = $conn->prepare("
-    SELECT COALESCE(SUM(amount),0) as total_out 
-    FROM transactions 
-    WHERE tenant_id = ? 
+    SELECT COALESCE(SUM(amount),0)
+    FROM transactions t
+    WHERE t.tenant_id = ?
+    AND type = 'replenish'
+    $dateCondition
+");
+$stmt->execute($params);
+$total_replenish = $stmt->fetchColumn();
+
+/* =========================
+   CASH OUT
+========================= */
+$stmt = $conn->prepare("
+    SELECT COALESCE(SUM(amount),0)
+    FROM transactions t
+    WHERE t.tenant_id = ?
     AND type = 'cash_out'
     $dateCondition
 ");
+$stmt->execute($params);
+$total_out = $stmt->fetchColumn();
 
-$stmt->execute([$tenant_id]);
-$total_out = $stmt->fetch()['total_out'];
-
-//
-// 💵 TOTAL FEES
-//
+/* =========================
+   FEES
+========================= */
 $stmt = $conn->prepare("
-    SELECT COALESCE(SUM(fee),0) as total_fee 
-    FROM transactions 
-    WHERE tenant_id = ?
+    SELECT COALESCE(SUM(fee),0)
+    FROM transactions t
+    WHERE t.tenant_id = ?
     $dateCondition
 ");
+$stmt->execute($params);
+$total_fee = $stmt->fetchColumn();
 
-$stmt->execute([$tenant_id]);
-$total_fee = $stmt->fetch()['total_fee'];
-
-//
-// 📊 BALANCE
-//
-$balance = $total_in - $total_out;
-
-//
-// 🧾 RECENT TRANSACTIONS
-//
+/* =========================
+   RECENT TRANSACTIONS
+========================= */
 $stmt = $conn->prepare("
-    SELECT * FROM transactions 
-    WHERE tenant_id = ?
+    SELECT t.*, c.name AS customer_name
+    FROM transactions t
+    LEFT JOIN customers c ON c.id = t.customer_id
+    WHERE t.tenant_id = ?
     $dateCondition
-    ORDER BY created_at DESC 
+    ORDER BY t.created_at DESC
     LIMIT 5
 ");
+$stmt->execute($params);
+$recent = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-$stmt->execute([$tenant_id]);
-$recent = $stmt->fetchAll();
-
-//
-// 📈 CHART DATA (Cash In / Cash Out per day)
-//
+/* =========================
+   CHART DATA (FILTERED)
+========================= */
 $stmt = $conn->prepare("
     SELECT 
-        DATE(created_at) as day,
-        SUM(CASE WHEN type='cash_in' THEN amount ELSE 0 END) as cash_in,
-        SUM(CASE WHEN type='cash_out' THEN amount ELSE 0 END) as cash_out
-    FROM transactions
-    WHERE tenant_id = ?
+        DATE(t.created_at) as day,
+        SUM(CASE WHEN t.type='cash_in' THEN t.amount ELSE 0 END) as cash_in,
+        SUM(CASE WHEN t.type='cash_out' THEN t.amount ELSE 0 END) as cash_out,
+        SUM(CASE WHEN t.type='replenish' THEN t.amount ELSE 0 END) as replenish
+    FROM transactions t
+    WHERE t.tenant_id = ?
     $dateCondition
-    GROUP BY DATE(created_at)
-    ORDER BY DATE(created_at) ASC
+    GROUP BY DATE(t.created_at)
+    ORDER BY DATE(t.created_at) ASC
 ");
-
-$stmt->execute([$tenant_id]);
+$stmt->execute($params);
 $chartData = $stmt->fetchAll(PDO::FETCH_ASSOC);
-?>
 
-<h2>Dashboard</h2>
+/* =========================
+   PIE CHART (NOW FILTERED)
+========================= */
+$stmt = $conn->prepare("
+    SELECT payment_status, COUNT(*) as total
+    FROM transactions t
+    WHERE t.tenant_id = ?
+    $dateCondition
+    GROUP BY payment_status
+");
+$stmt->execute($params);
+$pieData = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-<!-- BUSINESS NAME -->
-<div class="card" style="margin-bottom:15px;">
-    <h3 style="margin:0;">
-        <?= htmlspecialchars($business_name) ?>
-    </h3>
-    <small style="color:#6b7280;">Business Overview</small>
-</div>
+$paid = 0;
+$unpaid = 0;
 
-<form method="GET" style="margin-bottom:15px; display:flex; gap:10px; align-items:end; flex-wrap:wrap;">
+foreach ($pieData as $row) {
+    if ($row['payment_status'] === 'paid') $paid = (int)$row['total'];
+    if ($row['payment_status'] === 'unpaid') $unpaid = (int)$row['total'];
+}
 
-    <div>
-        <label>Quick Filter</label><br>
-        <select name="range" onchange="this.form.submit()">
-            <option value="today" <?= ($_GET['range'] ?? '') == 'today' ? 'selected' : '' ?>>Today</option>
-            <option value="week" <?= ($_GET['range'] ?? '') == 'week' ? 'selected' : '' ?>>This Week</option>
-            <option value="month" <?= ($_GET['range'] ?? '') == 'month' ? 'selected' : '' ?>>This Month</option>
-            <option value="year" <?= ($_GET['range'] ?? '') == 'year' ? 'selected' : '' ?>>This Year</option>
-            <option value="all" <?= ($_GET['range'] ?? 'all') == 'all' ? 'selected' : '' ?>>All Time</option>
-            <option value="custom" <?= ($_GET['range'] ?? '') == 'custom' ? 'selected' : '' ?>>
-                Custom
-            </option>
-        </select>
-    </div>
-
-    <div>
-        <label>From</label><br>
-        <input type="date" name="from" value="<?= $_GET['from'] ?? '' ?>">
-    </div>
-
-    <div>
-        <label>To</label><br>
-        <input type="date" name="to" value="<?= $_GET['to'] ?? '' ?>">
-    </div>
-
-    <div>
-        <button type="submit">Apply</button>
-    </div>
-
-</form>
-
-<!-- STATS -->
-<div class="flex" style="margin-bottom:20px;">
-
-    <div class="card">
-        <h3 style="color:#111827;">Available Balance</h3>
-        <p>
-            ₱<?= number_format($running_balance, 2) ?>
-        </p>
-    </div>
-
-    <div class="card">
-        <h3 style="color:#16a34a;">Cash In</h3>
-        <p>₱<?= number_format($total_in,2) ?></p>
-    </div>
-
-    <div class="card">
-        <h3 style="color:#dc2626;">Cash Out</h3>
-        <p>₱<?= number_format($total_out,2) ?></p>
-    </div>
-
-    <div class="card">
-        <h3 style="color:#2563eb;">Balance</h3>
-        <p>₱<?= number_format($balance,2) ?></p>
-    </div>
-
-    <div class="card">
-        <h3 style="color:#f59e0b;">Fees (Profit)</h3>
-        <p>₱<?= number_format($total_fee,2) ?></p>
-    </div>
-
-</div>
-
-<div class="card" style="margin-top:20px; height:300px;">
-    <h3>Cash Flow Overview</h3>
-    <canvas id="cashFlowChart"></canvas>
-</div>
-
-<!-- RECENT TRANSACTIONS -->
-<div class="card">
-
-    <h3>Recent Transactions</h3>
-
-    <table>
-
-        <tr>
-            <th>Type</th>
-            <th>Amount</th>
-            <th>Fee</th>
-            <th>Customer</th>
-            <th>Status</th>
-            <th>Date</th>
-        </tr>
-
-        <?php if (count($recent) == 0): ?>
-        <tr>
-            <td colspan="6" style="text-align:center; color:#6b7280; padding:15px;">
-                No transactions found.
-            </td>
-        </tr>
-        <?php endif; ?>
-
-        <?php foreach ($recent as $t): ?>
-        <tr>
-            <td><?= htmlspecialchars($t['type']) ?></td>
-            <td>₱<?= number_format($t['amount'],2) ?></td>
-            <td>₱<?= number_format($t['fee'],2) ?></td>
-            <td><?= htmlspecialchars($t['customer_name']) ?></td>
-            <td><?= htmlspecialchars($t['status']) ?></td>
-            <td><?= $t['created_at'] ?></td>
-        </tr>
-        <?php endforeach; ?>
-
-    </table>
-
-</div>
-
-<?php
+/* =========================
+   CHART PREP
+========================= */
 $labels = [];
 $cashInData = [];
 $cashOutData = [];
@@ -291,52 +205,161 @@ if (empty($labels)) {
     $cashInData = [0];
     $cashOutData = [0];
 }
+
+include "../includes/header.php";
 ?>
 
+<h2>Dashboard</h2>
+
+<!-- FILTER -->
+<form method="GET" style="
+    display:flex;
+    align-items:center;
+    gap:10px;
+    flex-wrap:nowrap;
+    overflow-x:auto;
+    padding:10px;
+    background:#fff;
+    border:1px solid #e5e7eb;
+    border-radius:10px;
+">
+
+    <select name="range" onchange="this.form.submit()" style="padding:6px;">
+        <option value="today" <?= $range=='today'?'selected':'' ?>>Today</option>
+        <option value="week" <?= $range=='week'?'selected':'' ?>>Week</option>
+        <option value="month" <?= $range=='month'?'selected':'' ?>>Month</option>
+        <option value="year" <?= $range=='year'?'selected':'' ?>>Year</option>
+        <option value="all" <?= $range=='all'?'selected':'' ?>>All</option>
+        <option value="custom" <?= $range=='custom'?'selected':'' ?>>Custom</option>
+    </select>
+
+    <input type="date" name="from"
+        value="<?= htmlspecialchars($from) ?>"
+        style="padding:6px;">
+
+    <span style="color:#6b7280;">to</span>
+
+    <input type="date" name="to"
+        value="<?= htmlspecialchars($to) ?>"
+        style="padding:6px;">
+
+    <button type="submit" style="
+        padding:6px 12px;
+        background:#2563eb;
+        color:#fff;
+        border:none;
+        border-radius:6px;
+        cursor:pointer;
+        white-space:nowrap;
+    ">
+        Apply
+    </button>
+
+</form>
+
+<!-- STATS -->
+<div style="display:flex; gap:15px; flex-wrap:wrap;">
+
+    <div class="card">Wallet<br>₱<?= number_format($running_balance,2) ?></div>
+    <div class="card">Cash In<br>₱<?= number_format($total_in,2) ?></div>
+    <div class="card">Cash Out<br>₱<?= number_format($total_out,2) ?></div>
+    <div class="card">Fees<br>₱<?= number_format($total_fee,2) ?></div>
+    <div class="card">Replenish<br>₱<?= number_format($total_replenish,2) ?></div>
+
+</div>
+
+<!-- CHARTS -->
+<div style="
+    display:flex;
+    gap:15px;
+    flex-wrap:wrap;
+    margin-top:20px;
+">
+
+    <!-- CHART CARD -->
+    <div style="
+        flex:1 1 500px;
+        min-width:300px;
+        background:#fff;
+        border:1px solid #e5e7eb;
+        border-radius:12px;
+        padding:15px;
+        height:350px;
+        box-sizing:border-box;
+    ">
+        <h3 style="margin-bottom:10px;">Cash Flow Overview</h3>
+        <div style="position:relative; height:280px;">
+            <canvas id="cashFlowChart"></canvas>
+        </div>
+    </div>
+
+    <!-- PIE CARD -->
+    <div style="
+        flex:1 1 300px;
+        min-width:280px;
+        background:#fff;
+        border:1px solid #e5e7eb;
+        border-radius:12px;
+        padding:15px;
+        height:350px;
+        box-sizing:border-box;
+    ">
+        <h3 style="margin-bottom:10px;">Payment Status</h3>
+        <div style="position:relative; height:280px;">
+            <canvas id="paymentPieChart"></canvas>
+        </div>
+    </div>
+
+</div>
+
+<!-- RECENT -->
+<h3>Recent Transactions</h3>
+<table border="1" width="100%">
+<tr>
+    <th>Type</th>
+    <th>Amount</th>
+    <th>Fee</th>
+    <th>Customer</th>
+    <th>Status</th>
+    <th>Date</th>
+</tr>
+
+<?php foreach ($recent as $t): ?>
+<tr>
+    <td><?= $t['type'] ?></td>
+    <td><?= $t['amount'] ?></td>
+    <td><?= $t['fee'] ?></td>
+    <td><?= $t['customer_name'] ?></td>
+    <td><?= $t['status'] ?></td>
+    <td><?= $t['created_at'] ?></td>
+</tr>
+<?php endforeach; ?>
+
+</table>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
 <script>
-document.addEventListener("DOMContentLoaded", function () {
+new Chart(document.getElementById('cashFlowChart'), {
+    type: 'line',
+    data: {
+        labels: <?= json_encode($labels) ?>,
+        datasets: [
+            { label:'Cash In', data: <?= json_encode($cashInData) ?>, borderColor:'green' },
+            { label:'Cash Out', data: <?= json_encode($cashOutData) ?>, borderColor:'red' }
+        ]
+    }
+});
 
-    const ctx = document.getElementById('cashFlowChart');
-
-    if (!ctx) return;
-
-    new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: <?= json_encode($labels) ?>,
-            datasets: [
-                {
-                    label: 'Cash In',
-                    data: <?= json_encode($cashInData) ?>,
-                    borderColor: '#16a34a',
-                    backgroundColor: 'rgba(22,163,74,0.1)',
-                    tension: 0.3
-                },
-                {
-                    label: 'Cash Out',
-                    data: <?= json_encode($cashOutData) ?>,
-                    borderColor: '#dc2626',
-                    backgroundColor: 'rgba(220,38,38,0.1)',
-                    tension: 0.3
-                }
-            ]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    position: 'top'
-                }
-            },
-            scales: {
-                y: {
-                    beginAtZero: true
-                }
-            }
-        }
-    });
-
+new Chart(document.getElementById('paymentPieChart'), {
+    type: 'pie',
+    data: {
+        labels: ['Paid','Unpaid'],
+        datasets: [{
+            data: [<?= $paid ?>, <?= $unpaid ?>],
+            backgroundColor: ['green','red']
+        }]
+    }
 });
 </script>
 

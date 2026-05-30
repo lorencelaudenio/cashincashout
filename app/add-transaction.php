@@ -8,6 +8,23 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 $tenant_id = $_SESSION['tenant_id'];
+
+$stmt = $conn->prepare("
+    SELECT COALESCE(SUM(
+        CASE 
+            WHEN type = 'cash_in' THEN amount
+            WHEN type = 'replenish' THEN amount
+            WHEN type = 'cash_out' THEN -amount
+            ELSE 0
+        END
+    ),0) AS balance
+    FROM transactions
+    WHERE tenant_id = ?
+");
+
+$stmt->execute([$tenant_id]);
+$available_balance = (float)$stmt->fetch()['balance'];
+
 $user_id = $_SESSION['user_id'];
 
 //
@@ -38,7 +55,22 @@ if ($_POST && isset($_POST['save'])) {
     $rule = $stmt->fetch(PDO::FETCH_ASSOC);
 
     // ✅ APPLY FREE LOGIC AFTER RULE
-    $fee = $isFree ? 0 : ($rule['fee'] ?? 0);
+    $isReplenish = ($type === "replenish");
+    $isFree = isset($_POST['free_transaction']);
+
+    if ($isReplenish || $isFree) {
+        $fee = 0;
+    } else {
+        $fee = $rule['fee'] ?? 0;
+    }
+
+    $isReplenish = ($type === "replenish");
+
+    if ($isReplenish) {
+        $customer_id = null;
+        $status = null;
+        $payment_status = null;
+    }
 
     // 💾 INSERT
     $stmt = $conn->prepare("
@@ -70,12 +102,18 @@ include "../includes/header.php";
 
 <div class="card">
 
+    <div class="card" style="margin-bottom:10px;">
+        🏦 Available Balance:
+        <strong id="availableBalance">₱<?= number_format($available_balance,2) ?></strong>
+    </div>
+
     <form method="POST">
 
         <label>Transaction Type</label>
-        <select name="type" required>
+        <select name="type" id="type" required>
             <option value="cash_in">Cash In</option>
             <option value="cash_out">Cash Out</option>
+            <option value="replenish">Replenish (Cash Float)</option>
         </select>
 
         <label>Amount</label>
@@ -87,8 +125,13 @@ include "../includes/header.php";
             <strong>₱<span id="feePreview">0.00</span></strong>
         </div>
 
+        <div class="card" style="margin-top:10px; background:#f1f5f9;">
+            ➕ New Balance After Transaction:
+            <strong>₱<span id="newBalance"><?= number_format($available_balance,2) ?></span></strong>
+        </div>
+
         <small id="freeNotice" style="color:green; display:none;">
-            Free transaction applied
+            Free transaction applied. State reason in notes.
         </small>
 
         <label class="checkbox">
@@ -97,7 +140,7 @@ include "../includes/header.php";
         </label>
 
         <label>Customer</label>
-        <select name="customer_id">
+        <select name="customer_id" id="customerField">
 
             <option value="">-- Select Customer --</option>
 
@@ -121,7 +164,7 @@ include "../includes/header.php";
         </select>
 
         <label>Status</label>
-        <select name="status">
+        <select name="status" id="statusField">
             <option value="claimed">Claimed</option>
             <option value="unclaimed">Unclaimed</option>
         </select>
@@ -130,7 +173,7 @@ include "../includes/header.php";
         <textarea name="notes" placeholder="Optional notes"></textarea>
 
         <label>Payment Status</label>
-        <select name="payment_status">
+        <select name="payment_status" id="paymentField">
             <option value="unpaid">Unpaid</option>
             <option value="paid">Paid</option>
         </select>
@@ -145,45 +188,121 @@ include "../includes/header.php";
 
 </div>
 
+
+
 <script>
+const typeField = document.getElementById("type");
+const amountField = document.getElementById("amount");
+const feePreview = document.getElementById("feePreview");
+const freeCheckbox = document.getElementById("freeTransaction");
+
+const customerField = document.getElementById("customerField");
+const statusField = document.getElementById("statusField");
+const paymentField = document.getElementById("paymentField");
+
+const availableBalance = <?= $available_balance ?>;
+const newBalanceEl = document.getElementById("newBalance");
+
 let currentFee = 0;
 
-document.getElementById("amount").addEventListener("input", function () {
+function updateUI() {
 
-    let amount = this.value;
+    const isReplenish = typeField.value === "replenish";
+    const isFree = freeCheckbox.checked;
+
+    // disable fields
+    customerField.disabled = isReplenish;
+    statusField.disabled = isReplenish;
+    paymentField.disabled = isReplenish;
+
+    if (isReplenish) {
+
+        // 🔥 CLEAR VALUES
+        customerField.value = "";
+        statusField.value = "";
+        paymentField.value = "";
+
+        feePreview.innerText = "0.00";
+
+        return;
+    }
+
+    let finalFee = isFree ? 0 : currentFee;
+    feePreview.innerText = finalFee.toFixed(2);
+
+    document.getElementById("freeNotice").style.display =
+        isFree ? "block" : "none";
+
+    updateBalancePreview();
+}
+
+// TYPE CHANGE
+typeField.addEventListener("change", function () {
+
+    if (this.value === "replenish") {
+        feePreview.innerText = "0.00";
+    }
+
+    updateUI();
+    updateBalancePreview();
+});
+
+// FREE CHECKBOX
+freeCheckbox.addEventListener("change", updateUI);
+
+// AMOUNT INPUT
+amountField.addEventListener("input", function () {
+
+    if (typeField.value === "replenish") {
+        feePreview.innerText = "0.00";
+        return;
+    }
 
     fetch("ajax/get-fee.php", {
         method: "POST",
         headers: {
             "Content-Type": "application/x-www-form-urlencoded"
         },
-        body: "amount=" + encodeURIComponent(amount)
+        body: "amount=" + encodeURIComponent(this.value)
     })
-    .then(res => res.json())
+    .then(res => res.json())   // 🔥 THIS WAS MISSING
     .then(data => {
-
         currentFee = parseFloat(data.fee || 0);
-
-        updateFee();
-
+        updateUI();
+        updateBalancePreview();
     });
 
 });
 
-document.getElementById("freeTransaction").addEventListener("change", function () {
-    updateFee();
-});
+function updateBalancePreview() {
 
-function updateFee() {
+    const amount = parseFloat(amountField.value || 0);
+    const isReplenish = typeField.value === "replenish";
 
-    let isFree = document.getElementById("freeTransaction").checked;
+    let newBalance = availableBalance;
 
-    let displayFee = isFree ? 0 : currentFee;
+    if (isReplenish) {
 
-    document.getElementById("feePreview").innerText = displayFee.toFixed(2);
+        // replenish adds money
+        newBalance += amount;
 
-    document.getElementById("freeNotice").style.display =
-        isFree ? "block" : "none";
+    } else {
+
+        if (typeField.value === "cash_in") {
+            newBalance += amount;
+        }
+
+        if (typeField.value === "cash_out") {
+            newBalance -= amount;
+        }
+
+        // ❌ fee ignored completely
+    }
+
+    newBalanceEl.innerText = newBalance.toFixed(2);
 }
+
+// INIT
+updateUI();
 </script>
 <?php include "../includes/footer.php"; ?>

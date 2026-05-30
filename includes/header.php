@@ -23,7 +23,7 @@ if (!isset($_SESSION['user_id'])) {
 
 <div class="navbar">
     <a href="/app/dashboard.php" class="logo-link">
-        💰 CashTrack System
+        💰 Cashin Cashout System
     </a>
 </div>
 
