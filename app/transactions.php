@@ -167,7 +167,7 @@ $transactions = $stmt->fetchAll();
         <td>₱<?= number_format($t['fee'], 2) ?></td>
         <td><?= htmlspecialchars($t['customer_name'] ?? 'No Customer') ?></td>
         <td><?= htmlspecialchars($t['notes']) ?></td>
-        <td><?= htmlspecialchars($t['status']) ?></td>
+        <td><?= htmlspecialchars($t['notes'] ?? '') ?></td>
         <td><?= $t['created_at'] ?></td>
         <td>
             <?php if ($t['payment_status'] == 'paid'): ?>
